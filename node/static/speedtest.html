@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speed Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            max-width: 800px;
+            width: 100%;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+            letter-spacing: 2px;
+        }
+        .subtitle { color: #8892b0; margin-bottom: 40px; font-size: 1.1em; }
+        
+        /* Gauge */
+        .gauge-container {
+            position: relative;
+            width: 320px;
+            height: 200px;
+            margin: 0 auto 40px;
+        }
+        .gauge-bg {
+            position: absolute;
+            width: 320px;
+            height: 160px;
+            border-radius: 160px 160px 0 0;
+            background: linear-gradient(90deg, #00d4ff 0%, #00ff88 25%, #ffdd00 50%, #ff6b00 75%, #ff0055 100%);
+            overflow: hidden;
+        }
+        .gauge-bg::after {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            bottom: 0;
+            background: #1a1a2e;
+            border-radius: 140px 140px 0 0;
+        }
+        .gauge-needle {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            width: 4px;
+            height: 130px;
+            background: linear-gradient(to top, #fff 0%, #fff 80%, transparent 100%);
+            transform-origin: bottom center;
+            transform: translateX(-50%) rotate(-90deg);
+            transition: transform 0.3s ease-out;
+            border-radius: 2px;
+            z-index: 10;
+        }
+        .gauge-center {
+            position: absolute;
+            bottom: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 30px;
+            height: 30px;
+            background: #fff;
+            border-radius: 50%;
+            z-index: 11;
+        }
+        .gauge-value {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 3em;
+            font-weight: 700;
+            z-index: 12;
+        }
+        .gauge-unit { font-size: 0.4em; font-weight: 400; color: #8892b0; display: block; }
+        .gauge-labels {
+            position: absolute;
+            bottom: 5px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 10px;
+            font-size: 0.8em;
+            color: #8892b0;
+        }
+        
+        /* GO Button */
+        .go-button {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            border: 4px solid #00d4ff;
+            background: transparent;
+            color: #00d4ff;
+            font-size: 2.5em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .go-button:hover {
+            background: rgba(0, 212, 255, 0.1);
+            transform: scale(1.05);
+            box-shadow: 0 0 40px rgba(0, 212, 255, 0.3);
+        }
+        .go-button:disabled { border-color: #4a5568; color: #4a5568; cursor: not-allowed; transform: none; }
+        .go-button.testing { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); }
+            50% { box-shadow: 0 0 0 20px rgba(0, 212, 255, 0); }
+        }
+        
+        /* Results */
+        .results { display: flex; justify-content: center; gap: 60px; margin-top: 40px; flex-wrap: wrap; }
+        .result-item { text-align: center; min-width: 120px; }
+        .result-label { font-size: 0.9em; color: #8892b0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .result-value { font-size: 2.5em; font-weight: 700; }
+        .result-unit { font-size: 0.5em; color: #8892b0; font-weight: 400; }
+        .result-item.ping .result-value { color: #00d4ff; }
+        .result-item.download .result-value { color: #00ff88; }
+        .result-item.upload .result-value { color: #ff6b00; }
+        
+        .status { margin-top: 20px; font-size: 1.1em; color: #8892b0; min-height: 30px; }
+        .status.active { color: #00d4ff; }
+        
+        .share-section { margin-top: 40px; padding-top: 30px; border-top: 1px solid #2d3748; display: none; }
+        .share-section.visible { display: block; }
+        .share-btn {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        .share-btn:hover { background: #00b8e6; transform: translateY(-2px); }
+        .share-btn.secondary { background: transparent; border: 2px solid #4a5568; color: #8892b0; }
+        .share-btn.secondary:hover { border-color: #00d4ff; color: #00d4ff; }
+        
+        .phase-indicator { display: flex; justify-content: center; gap: 30px; margin-bottom: 30px; }
+        .phase { display: flex; align-items: center; gap: 8px; color: #4a5568; }
+        .phase.active { color: #00d4ff; }
+        .phase.complete { color: #00ff88; }
+        .phase-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+        
+        .advanced-section {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px solid #2d3748;
+        }
+        .advanced-section code {
+            font-family: 'Courier New', monospace;
+        }
+        
+        .footer { margin-top: 40px; color: #4a5568; font-size: 0.85em; }
+        
+        /* Customer ID input */
+        .customer-input { margin-bottom: 30px; }
+        .customer-input input {
+            background: rgba(255,255,255,0.1);
+            border: 2px solid #4a5568;
+            border-radius: 8px;
+            padding: 12px 20px;
+            color: white;
+            font-size: 1em;
+            width: 300px;
+            text-align: center;
+        }
+        .customer-input input:focus { outline: none; border-color: #00d4ff; }
+        .customer-input input::placeholder { color: #8892b0; }
+        .customer-input label { display: block; margin-bottom: 8px; color: #8892b0; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SPEED TEST</h1>
+        <p class="subtitle">Test your connection speed</p>
+        
+        <div class="customer-input">
+            <label>Circuit ID / Account Number (optional)</label>
+            <input type="text" id="customer-id" placeholder="Enter for tracking">
+        </div>
+        
+        <div class="phase-indicator">
+            <div class="phase" id="phase-ping"><span class="phase-dot"></span><span>Ping</span></div>
+            <div class="phase" id="phase-download"><span class="phase-dot"></span><span>Download</span></div>
+            <div class="phase" id="phase-upload"><span class="phase-dot"></span><span>Upload</span></div>
+        </div>
+        
+        <div class="gauge-container">
+            <div class="gauge-bg"></div>
+            <div class="gauge-needle" id="gauge-needle"></div>
+            <div class="gauge-center"></div>
+            <div class="gauge-value" id="gauge-value">0<span class="gauge-unit">Mbps</span></div>
+            <div class="gauge-labels"><span>0</span><span>250</span><span>500</span><span>750</span><span>1000</span></div>
+        </div>
+        
+        <button class="go-button" id="go-btn" onclick="startTest()">GO</button>
+        <div class="status" id="status">Click GO to start the test</div>
+        
+        <div class="results">
+            <div class="result-item ping">
+                <div class="result-label">Ping</div>
+                <div class="result-value" id="result-ping">--<span class="result-unit">ms</span></div>
+            </div>
+            <div class="result-item download">
+                <div class="result-label">Download</div>
+                <div class="result-value" id="result-download">--<span class="result-unit">Mbps</span></div>
+            </div>
+            <div class="result-item upload">
+                <div class="result-label">Upload</div>
+                <div class="result-value" id="result-upload">--<span class="result-unit">Mbps</span></div>
+            </div>
+        </div>
+        
+        <div class="share-section" id="share-section">
+            <button class="share-btn" onclick="copyResults()">Copy Results</button>
+            <button class="share-btn secondary" onclick="startTest()">Test Again</button>
+        </div>
+        
+        <div class="advanced-section">
+            <p style="margin-bottom: 15px; color: #8892b0;">Need more detailed testing?</p>
+            <button class="share-btn secondary" onclick="toggleAdvanced()">Advanced Test Tool ▼</button>
+            <div id="advanced-panel" style="display:none; margin-top:20px; text-align:left; background:rgba(255,255,255,0.05); padding:20px; border-radius:8px;">
+                <h3 style="margin-bottom:15px;">Download Test Client</h3>
+                <p style="color:#8892b0; margin-bottom:15px; font-size:0.9em;">
+                    For more accurate testing, download our lightweight script for your operating system.
+                    It runs locally on your computer and provides detailed network diagnostics.
+                </p>
+                <ul style="color:#8892b0; margin-bottom:20px; font-size:0.85em; margin-left:20px;">
+                    <li>No installation required</li>
+                    <li>Fully transparent - view source code below</li>
+                    <li>Self-deleting option after test</li>
+                    <li>No data collected beyond what you see</li>
+                </ul>
+                
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;">
+                    <div class="os-download" style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; text-align:center;">
+                        <div style="font-size:2em; margin-bottom:8px;">🪟</div>
+                        <div style="font-weight:600; margin-bottom:8px;">Windows</div>
+                        <a href="/api/client-script/ps1" class="share-btn" style="display:block; font-size:0.85em; padding:8px 15px;" download="network_test.ps1">Download .ps1</a>
+                        <p style="color:#8892b0; font-size:0.75em; margin-top:8px;">PowerShell 5.1+</p>
+                    </div>
+                    <div class="os-download" style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; text-align:center;">
+                        <div style="font-size:2em; margin-bottom:8px;">🍎</div>
+                        <div style="font-weight:600; margin-bottom:8px;">macOS</div>
+                        <a href="/api/client-script/sh" class="share-btn" style="display:block; font-size:0.85em; padding:8px 15px;" download="network_test.sh">Download .sh</a>
+                        <p style="color:#8892b0; font-size:0.75em; margin-top:8px;">Bash + curl</p>
+                    </div>
+                    <div class="os-download" style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; text-align:center;">
+                        <div style="font-size:2em; margin-bottom:8px;">🐧</div>
+                        <div style="font-weight:600; margin-bottom:8px;">Linux</div>
+                        <a href="/api/client-script/sh" class="share-btn" style="display:block; font-size:0.85em; padding:8px 15px;" download="network_test.sh">Download .sh</a>
+                        <p style="color:#8892b0; font-size:0.75em; margin-top:8px;">Bash + curl</p>
+                    </div>
+                    <div class="os-download" style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; text-align:center;">
+                        <div style="font-size:2em; margin-bottom:8px;">🐍</div>
+                        <div style="font-weight:600; margin-bottom:8px;">Universal</div>
+                        <a href="/api/client-script" class="share-btn" style="display:block; font-size:0.85em; padding:8px 15px;" download="network_test.py">Download .py</a>
+                        <p style="color:#8892b0; font-size:0.75em; margin-top:8px;">Python 3 (any OS)</p>
+                    </div>
+                </div>
+                
+                <div style="background:rgba(0,212,255,0.1); border:1px solid rgba(0,212,255,0.3); border-radius:8px; padding:15px; margin-bottom:15px;">
+                    <div style="font-weight:600; margin-bottom:8px; color:#00d4ff;">How to run:</div>
+                    <div style="display:grid; gap:8px; font-size:0.85em;">
+                        <div><span style="color:#8892b0;">Windows:</span> <code style="background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px;">powershell -ExecutionPolicy Bypass -File network_test.ps1</code></div>
+                        <div><span style="color:#8892b0;">macOS/Linux:</span> <code style="background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px;">bash network_test.sh</code></div>
+                        <div><span style="color:#8892b0;">Python:</span> <code style="background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px;">python network_test.py</code></div>
+                    </div>
+                </div>
+                
+                <details style="margin-top:15px;">
+                    <summary style="cursor:pointer; color:#00d4ff;">View Source Code</summary>
+                    <div style="margin-top:10px;">
+                        <select id="source-select" onchange="loadSourceCode()" style="background:rgba(0,0,0,0.3); border:1px solid #4a5568; color:white; padding:8px 12px; border-radius:4px; margin-bottom:10px;">
+                            <option value="py">Python (network_test.py)</option>
+                            <option value="ps1">PowerShell (network_test.ps1)</option>
+                            <option value="sh">Bash (network_test.sh)</option>
+                        </select>
+                    </div>
+                    <pre id="source-code" style="background:#1a1a2e; padding:15px; border-radius:8px; margin-top:10px; max-height:300px; overflow:auto; font-size:0.75em; text-align:left;"></pre>
+                </details>
+            </div>
+        </div>
+        
+        <div class="footer">Network Diagnostic Platform</div>
+    </div>
+
+    <script>
+        let testResults = { ping: null, download: null, upload: null };
+        let isRunning = false;
+        
+        // Get token from URL if present
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        
+        function setPhase(phase, state) {
+            const el = document.getElementById(`phase-${phase}`);
+            el.classList.remove('active', 'complete');
+            if (state) el.classList.add(state);
+        }
+        
+        function updateGauge(value, maxValue = 1000) {
+            const percentage = Math.min(value / maxValue, 1);
+            const angle = -90 + (percentage * 180);
+            document.getElementById('gauge-needle').style.transform = `translateX(-50%) rotate(${angle}deg)`;
+            document.getElementById('gauge-value').innerHTML = `${Math.round(value)}<span class="gauge-unit">Mbps</span>`;
+        }
+        
+        function setStatus(text, active = false) {
+            const el = document.getElementById('status');
+            el.textContent = text;
+            el.classList.toggle('active', active);
+        }
+        
+        async function measurePing() {
+            setPhase('ping', 'active');
+            setStatus('Measuring latency...', true);
+            
+            const times = [];
+            for (let i = 0; i < 10; i++) {
+                const start = performance.now();
+                try {
+                    await fetch('/api/speedtest/ping', { cache: 'no-store' });
+                    times.push(performance.now() - start);
+                } catch (e) {}
+            }
+            
+            if (times.length > 0) {
+                testResults.ping = {
+                    min: Math.round(Math.min(...times)),
+                    avg: Math.round(times.reduce((a, b) => a + b, 0) / times.length),
+                    max: Math.round(Math.max(...times))
+                };
+                document.getElementById('result-ping').innerHTML = `${testResults.ping.avg}<span class="result-unit">ms</span>`;
+            }
+            setPhase('ping', 'complete');
+        }
+        
+        async function measureDownload() {
+            setPhase('download', 'active');
+            setStatus('Testing download speed...', true);
+            
+            const duration = 10000;
+            const startTime = performance.now();
+            let totalBytes = 0;
+            let lastUpdate = startTime;
+            const workers = [];
+            
+            for (let i = 0; i < 4; i++) {
+                workers.push((async () => {
+                    while (performance.now() - startTime < duration && isRunning) {
+                        try {
+                            const response = await fetch('/api/speedtest/download?size=1048576', { cache: 'no-store' });
+                            const data = await response.arrayBuffer();
+                            totalBytes += data.byteLength;
+                            
+                            const now = performance.now();
+                            if (now - lastUpdate > 200) {
+                                const elapsed = (now - startTime) / 1000;
+                                updateGauge((totalBytes * 8) / (elapsed * 1000000));
+                                lastUpdate = now;
+                            }
+                        } catch (e) {}
+                    }
+                })());
+            }
+            
+            await Promise.all(workers);
+            
+            const elapsed = (performance.now() - startTime) / 1000;
+            testResults.download = Math.round((totalBytes * 8) / (elapsed * 1000000) * 100) / 100;
+            document.getElementById('result-download').innerHTML = `${testResults.download.toFixed(1)}<span class="result-unit">Mbps</span>`;
+            updateGauge(testResults.download);
+            setPhase('download', 'complete');
+        }
+        
+        async function measureUpload() {
+            setPhase('upload', 'active');
+            setStatus('Testing upload speed...', true);
+            updateGauge(0);
+            
+            const duration = 10000;
+            const startTime = performance.now();
+            let totalBytes = 0;
+            let lastUpdate = startTime;
+            // Generate 256KB of random data in chunks (crypto.getRandomValues limited to 65536 bytes)
+            const uploadData = new Uint8Array(262144);
+            for (let i = 0; i < uploadData.length; i += 65536) {
+                crypto.getRandomValues(uploadData.subarray(i, Math.min(i + 65536, uploadData.length)));
+            }
+            const workers = [];
+            
+            for (let i = 0; i < 4; i++) {
+                workers.push((async () => {
+                    while (performance.now() - startTime < duration && isRunning) {
+                        try {
+                            const response = await fetch('/api/speedtest/upload', {
+                                method: 'POST',
+                                body: uploadData,
+                                headers: { 'Content-Type': 'application/octet-stream' }
+                            });
+                            if (response.ok) {
+                                totalBytes += uploadData.length;
+                                const now = performance.now();
+                                if (now - lastUpdate > 200) {
+                                    const elapsed = (now - startTime) / 1000;
+                                    updateGauge((totalBytes * 8) / (elapsed * 1000000));
+                                    lastUpdate = now;
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                })());
+            }
+            
+            await Promise.all(workers);
+            
+            const elapsed = (performance.now() - startTime) / 1000;
+            testResults.upload = Math.round((totalBytes * 8) / (elapsed * 1000000) * 100) / 100;
+            document.getElementById('result-upload').innerHTML = `${testResults.upload.toFixed(1)}<span class="result-unit">Mbps</span>`;
+            updateGauge(testResults.upload);
+            setPhase('upload', 'complete');
+        }
+        
+        async function saveResults() {
+            const customerId = document.getElementById('customer-id').value;
+            try {
+                await fetch('/api/speedtest/result', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ping_ms: testResults.ping?.avg,
+                        ping_min: testResults.ping?.min,
+                        ping_max: testResults.ping?.max,
+                        download_mbps: testResults.download,
+                        upload_mbps: testResults.upload,
+                        customer_id: customerId || null,
+                        token: token,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+            } catch (e) {}
+        }
+        
+        async function startTest() {
+            if (isRunning) return;
+            
+            isRunning = true;
+            const btn = document.getElementById('go-btn');
+            btn.disabled = true;
+            btn.classList.add('testing');
+            btn.textContent = '...';
+            
+            testResults = { ping: null, download: null, upload: null };
+            document.getElementById('result-ping').innerHTML = '--<span class="result-unit">ms</span>';
+            document.getElementById('result-download').innerHTML = '--<span class="result-unit">Mbps</span>';
+            document.getElementById('result-upload').innerHTML = '--<span class="result-unit">Mbps</span>';
+            document.getElementById('share-section').classList.remove('visible');
+            ['ping', 'download', 'upload'].forEach(p => setPhase(p, ''));
+            updateGauge(0);
+            
+            try {
+                await measurePing();
+                if (isRunning) await measureDownload();
+                if (isRunning) await measureUpload();
+                
+                if (isRunning) {
+                    setStatus('Test complete!');
+                    document.getElementById('share-section').classList.add('visible');
+                    await saveResults();
+                }
+            } catch (e) {
+                setStatus('Test failed: ' + e.message);
+            }
+            
+            isRunning = false;
+            btn.disabled = false;
+            btn.classList.remove('testing');
+            btn.textContent = 'GO';
+        }
+        
+        function copyResults() {
+            const customerId = document.getElementById('customer-id').value;
+            let text = `Speed Test Results\n`;
+            if (customerId) text += `Customer: ${customerId}\n`;
+            text += `Ping: ${testResults.ping?.avg || '--'} ms (min: ${testResults.ping?.min || '--'}, max: ${testResults.ping?.max || '--'})\n`;
+            text += `Download: ${testResults.download || '--'} Mbps\n`;
+            text += `Upload: ${testResults.upload || '--'} Mbps\n`;
+            text += `Tested: ${new Date().toLocaleString()}`;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy Results', 2000);
+            });
+        }
+        
+        function toggleAdvanced() {
+            const panel = document.getElementById('advanced-panel');
+            const btn = event.target;
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                btn.textContent = 'Advanced Test Tool ▲';
+                loadSourceCode();
+            } else {
+                panel.style.display = 'none';
+                btn.textContent = 'Advanced Test Tool ▼';
+            }
+        }
+        
+        async function loadSourceCode() {
+            const pre = document.getElementById('source-code');
+            const select = document.getElementById('source-select');
+            const scriptType = select ? select.value : 'py';
+            
+            const endpoints = {
+                'py': '/api/client-script',
+                'ps1': '/api/client-script/ps1',
+                'sh': '/api/client-script/sh'
+            };
+            
+            pre.textContent = 'Loading...';
+            
+            try {
+                const resp = await fetch(endpoints[scriptType]);
+                const code = await resp.text();
+                pre.textContent = code;
+            } catch (e) {
+                pre.textContent = 'Failed to load source code';
+            }
+        }
+    </script>
+</body>
+</html>

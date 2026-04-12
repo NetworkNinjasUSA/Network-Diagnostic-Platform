@@ -1,0 +1,48 @@
+# Network Diagnostic Platform - Test Node
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iperf3 \
+    tcpdump \
+    traceroute \
+    mtr-tiny \
+    dnsutils \
+    iputils-ping \
+    nmap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements first for caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY shared/ ./shared/
+COPY node/ ./node/
+
+# Create static directory if not exists
+RUN mkdir -p /app/node/static
+
+# Create non-root user (but keep cap_net_raw for ping/tcpdump)
+RUN useradd -m -u 1000 appuser
+RUN chown -R appuser:appuser /app
+
+# Set capabilities for network tools
+RUN setcap cap_net_raw+ep /usr/bin/ping || true
+RUN setcap cap_net_raw+ep /usr/bin/traceroute || true
+
+# Environment
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 8000
+
+# Run as appuser (some tools may need root - use docker --cap-add=NET_RAW)
+USER appuser
+
+# Start server
+CMD ["python", "-m", "uvicorn", "node.main:app", "--host", "0.0.0.0", "--port", "8000"]

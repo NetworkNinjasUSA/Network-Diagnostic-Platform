@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Diagnostic Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; min-height: 100vh; }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 1.5em; font-weight: 500; }
+        .header .node-info { font-size: 0.9em; opacity: 0.9; }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 0.95em;
+            transition: all 0.2s;
+        }
+        .tab:hover { background: #f0f2f5; }
+        .tab.active { background: #667eea; color: white; }
+        
+        .panel { display: none; }
+        .panel.active { display: block; }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .card h2 {
+            font-size: 1.2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            color: #333;
+        }
+        
+        .form-row { display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap; }
+        .form-group { flex: 1; min-width: 200px; }
+        .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #555; font-size: 0.9em; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 0.95em;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #667eea; }
+        .help-text { font-size: 0.8em; color: #888; margin-top: 4px; }
+        
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a6fd6; transform: translateY(-1px); }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        
+        .result-box {
+            background: #f8f9fa;
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .result-box pre {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 0.85em;
+            max-height: 400px;
+        }
+        
+        .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .metric {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .metric-value { font-size: 2em; font-weight: 700; }
+        .metric-label { font-size: 0.85em; opacity: 0.9; margin-top: 5px; }
+        
+        .hop-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .hop-table th, .hop-table td { padding: 10px; text-align: left; border-bottom: 1px solid #e1e5e9; }
+        .hop-table th { background: #f8f9fa; font-weight: 600; }
+        .hop-table tr:hover { background: #f8f9fa; }
+        .hop-timeout { color: #dc3545; }
+        .hop-warning { background: #fff3cd !important; }
+        .hop-error { background: #f8d7da !important; }
+        
+        .test-list { max-height: 400px; overflow-y: auto; }
+        .test-item {
+            padding: 15px;
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .test-item:hover { background: #f8f9fa; }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-running { background: #fff3cd; color: #856404; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        
+        .token-card {
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        .token-url {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .error-msg { background: #f8d7da; color: #721c24; padding: 15px; border-radius: 6px; margin: 10px 0; }
+        .success-msg { background: #d4edda; color: #155724; padding: 15px; border-radius: 6px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Network Diagnostic Platform</h1>
+            <div class="node-info" id="node-info">Loading node info...</div>
+        </div>
+        <div>
+            <button class="btn btn-secondary" onclick="location.href='/speedtest'">Customer Speed Test →</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="showPanel('speedtest')">Speed Test</button>
+            <button class="tab" onclick="showPanel('traceroute')">Traceroute</button>
+            <button class="tab" onclick="showPanel('mtr')">MTR</button>
+            <button class="tab" onclick="showPanel('dns')">DNS</button>
+            <button class="tab" onclick="showPanel('tcp')">TCP/SSL</button>
+            <button class="tab" onclick="showPanel('ping')">Continuous Ping</button>
+            <button class="tab" onclick="showPanel('iperf')">iPerf3</button>
+            <button class="tab" onclick="showPanel('capture')">Packet Capture</button>
+            <button class="tab" onclick="showPanel('tokens')">Customer Tokens</button>
+            <button class="tab" onclick="showPanel('history')">Test History</button>
+        </div>
+        
+        <!-- Speed Test Panel -->
+        <div id="panel-speedtest" class="panel active">
+            <div class="card">
+                <h2>HTTP Speed Test</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select id="speedtest-mode" onchange="updateSpeedtestForm()">
+                            <option value="server">Start Test Server (for customers)</option>
+                            <option value="client">Test to Remote Server</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div id="speedtest-server-mode">
+                    <div class="success-msg">
+                        <strong>Speed Test Server Active</strong><br>
+                        Share the link below with customers to test their connection to this node.
+                    </div>
+                    <div class="token-url" id="speedtest-url"></div>
+                    <button class="btn btn-primary" onclick="copySpeedtestUrl()">Copy Link</button>
+                    <button class="btn btn-secondary" onclick="showPanel('tokens')">Create Tracked Token</button>
+                </div>
+                
+                <div id="speedtest-client-mode" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Target URL</label>
+                            <input type="text" id="speedtest-target" placeholder="http://192.168.1.100:8000">
+                        </div>
+                        <div class="form-group">
+                            <label>Duration (seconds)</label>
+                            <input type="number" id="speedtest-duration" value="10" min="5" max="60">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="runSpeedtest()">Run Speed Test</button>
+                </div>
+                
+                <div id="speedtest-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Traceroute Panel -->
+        <div id="panel-traceroute" class="panel">
+            <div class="card">
+                <h2>Traceroute</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Host</label>
+                        <input type="text" id="traceroute-target" placeholder="8.8.8.8 or google.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Protocol</label>
+                        <select id="traceroute-protocol">
+                            <option value="icmp">ICMP</option>
+                            <option value="udp">UDP</option>
+                            <option value="tcp">TCP</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Max Hops</label>
+                        <input type="number" id="traceroute-maxhops" value="30" min="1" max="64">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="runTraceroute()" id="btn-traceroute">Run Traceroute</button>
+                <div id="traceroute-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- MTR Panel -->
+        <div id="panel-mtr" class="panel">
+            <div class="card">
+                <h2>MTR (My Traceroute)</h2>
+                <p class="help-text" style="margin-bottom:15px;">Combines traceroute and ping for detailed path analysis with packet loss statistics.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Host</label>
+                        <input type="text" id="mtr-target" placeholder="8.8.8.8 or google.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Packet Count</label>
+                        <input type="number" id="mtr-count" value="10" min="1" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Hops</label>
+                        <input type="number" id="mtr-maxhops" value="30" min="1" max="64">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="runMTR()" id="btn-mtr">Run MTR</button>
+                <div id="mtr-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- DNS Panel -->
+        <div id="panel-dns" class="panel">
+            <div class="card">
+                <h2>DNS Lookup</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Query</label>
+                        <input type="text" id="dns-query" placeholder="example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Record Type</label>
+                        <select id="dns-type">
+                            <option value="A">A (IPv4)</option>
+                            <option value="AAAA">AAAA (IPv6)</option>
+                            <option value="MX">MX (Mail)</option>
+                            <option value="TXT">TXT</option>
+                            <option value="CNAME">CNAME</option>
+                            <option value="NS">NS (Nameserver)</option>
+                            <option value="SOA">SOA</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>DNS Server (optional)</label>
+                        <input type="text" id="dns-server" placeholder="8.8.8.8">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="runDNS()" id="btn-dns">Lookup</button>
+                <button class="btn btn-secondary" onclick="runDNSPropagation()">Check Propagation</button>
+                <div id="dns-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- TCP/SSL Panel -->
+        <div id="panel-tcp" class="panel">
+            <div class="card">
+                <h2>TCP Port Check</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Host</label>
+                        <input type="text" id="tcp-host" placeholder="example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" id="tcp-port" value="443" min="1" max="65535">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="runTCPCheck()">Check Port</button>
+                <button class="btn btn-success" onclick="runSSLCheck()">Check SSL Certificate</button>
+                <div id="tcp-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Continuous Ping Panel -->
+        <div id="panel-ping" class="panel">
+            <div class="card">
+                <h2>Continuous Ping Monitor</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Host</label>
+                        <input type="text" id="ping-target" placeholder="8.8.8.8">
+                    </div>
+                    <div class="form-group">
+                        <label>Interval (seconds)</label>
+                        <input type="number" id="ping-interval" value="1" min="0.5" max="10" step="0.5">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (seconds)</label>
+                        <input type="number" id="ping-duration" value="60" min="10" max="3600">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="startPing()" id="btn-ping-start">Start Ping</button>
+                <div id="ping-sessions" style="margin-top:20px;"></div>
+            </div>
+        </div>
+        
+        <!-- iPerf3 Panel -->
+        <div id="panel-iperf" class="panel">
+            <div class="card">
+                <h2>iPerf3 Bandwidth Test</h2>
+                <p class="help-text" style="margin-bottom:15px;">Test raw network bandwidth using iPerf3. Requires iPerf3 installed on both endpoints.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select id="iperf-mode" onchange="updateIperfForm()">
+                            <option value="client">Client (connect to server)</option>
+                            <option value="server">Server (listen for connections)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Protocol</label>
+                        <select id="iperf-protocol">
+                            <option value="tcp">TCP</option>
+                            <option value="udp">UDP</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div id="iperf-client-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Server Address</label>
+                            <input type="text" id="iperf-server" placeholder="192.168.1.100">
+                        </div>
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="number" id="iperf-port" value="5201">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Duration (seconds)</label>
+                            <input type="number" id="iperf-duration" value="10" min="1" max="300">
+                        </div>
+                        <div class="form-group">
+                            <label>Parallel Streams</label>
+                            <input type="number" id="iperf-parallel" value="1" min="1" max="128">
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="iperf-server-form" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Listen Port</label>
+                            <input type="number" id="iperf-listen-port" value="5201">
+                        </div>
+                        <div class="form-group">
+                            <label>Options</label>
+                            <label style="font-weight:normal;"><input type="checkbox" id="iperf-oneoff" checked> One-off (exit after first client)</label>
+                        </div>
+                    </div>
+                    <div class="help-text">Server will listen for incoming iPerf3 connections. Make sure port is open in firewall.</div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="runIperf()" id="btn-iperf">Run iPerf3</button>
+                <div id="iperf-result" class="result-box" style="display:none;"></div>
+            </div>
+        </div>
+        
+        <!-- Packet Capture Panel -->
+        <div id="panel-capture" class="panel">
+            <div class="card">
+                <h2>Packet Capture</h2>
+                <p class="help-text" style="margin-bottom:15px;">Capture network traffic using tcpdump. Requires root/sudo privileges.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Interface</label>
+                        <select id="capture-interface">
+                            <option value="any">any (all interfaces)</option>
+                            <option value="eth0">eth0</option>
+                            <option value="ens33">ens33</option>
+                            <option value="ens160">ens160</option>
+                            <option value="lo">lo (loopback)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Capture Method</label>
+                        <select id="capture-method" onchange="updateCaptureForm()">
+                            <option value="count">Packet Count</option>
+                            <option value="duration">Duration</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div id="capture-count-form">
+                    <div class="form-group">
+                        <label>Packet Count</label>
+                        <input type="number" id="capture-count" value="100" min="1" max="10000">
+                    </div>
+                </div>
+                
+                <div id="capture-duration-form" style="display:none;">
+                    <div class="form-group">
+                        <label>Duration (seconds)</label>
+                        <input type="number" id="capture-duration" value="30" min="1" max="300">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Filter Preset</label>
+                    <select id="capture-preset" onchange="updateCaptureFilter()">
+                        <option value="">None / Custom</option>
+                        <option value="tcp">TCP Traffic</option>
+                        <option value="udp">UDP Traffic</option>
+                        <option value="icmp">ICMP (ping)</option>
+                        <option value="port 80">HTTP (port 80)</option>
+                        <option value="port 443">HTTPS (port 443)</option>
+                        <option value="port 53">DNS (port 53)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Custom Filter (BPF syntax)</label>
+                    <input type="text" id="capture-filter" placeholder="host 192.168.1.1 and port 80">
+                    <div class="help-text">Examples: "tcp and port 80", "host 10.0.0.1", "net 192.168.0.0/24"</div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="runCapture()" id="btn-capture">Start Capture</button>
+                <div id="capture-result" class="result-box" style="display:none;"></div>
+            </div>
+            
+            <div class="card">
+                <h2>Capture Files</h2>
+                <div id="capture-files">Loading...</div>
+            </div>
+        </div>
+        
+        <!-- Customer Tokens Panel -->
+        <div id="panel-tokens" class="panel">
+            <div class="card">
+                <h2>Create Customer Test Token</h2>
+                <p class="help-text" style="margin-bottom:15px;">Generate a tracked link for customers. Results will be associated with the customer ID.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Customer ID / Circuit ID</label>
+                        <input type="text" id="token-customer" placeholder="CKT-12345">
+                    </div>
+                    <div class="form-group">
+                        <label>Expires In (hours)</label>
+                        <input type="number" id="token-expires" value="24" min="1" max="168">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Uses</label>
+                        <input type="number" id="token-uses" value="5" min="1" max="100">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Note (optional)</label>
+                    <input type="text" id="token-note" placeholder="Troubleshooting ticket #12345">
+                </div>
+                <button class="btn btn-primary" onclick="createToken()">Create Token</button>
+                
+                <div id="token-created" class="token-card" style="display:none; margin-top:20px;">
+                    <strong>Token Created!</strong>
+                    <div class="token-url" id="new-token-url"></div>
+                    <button class="btn btn-primary" onclick="copyNewTokenUrl()">Copy Link</button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Active Tokens</h2>
+                <div id="token-list" class="test-list">Loading...</div>
+            </div>
+        </div>
+        
+        <!-- Test History Panel -->
+        <div id="panel-history" class="panel">
+            <div class="card">
+                <h2>Test History</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Filter by Type</label>
+                        <select id="history-filter" onchange="loadHistory()">
+                            <option value="">All Tests</option>
+                            <option value="speedtest_customer">Customer Speed Tests</option>
+                            <option value="traceroute">Traceroute</option>
+                            <option value="mtr">MTR</option>
+                            <option value="dns">DNS</option>
+                            <option value="tcp_check">TCP Check</option>
+                            <option value="ssl_check">SSL Check</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="history-list" class="test-list">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadNodeInfo();
+            updateSpeedtestForm();
+            loadHistory();
+            loadTokens();
+            loadPingSessions();
+        });
+        
+        async function loadNodeInfo() {
+            try {
+                const resp = await fetch('/api/node/info');
+                const info = await resp.json();
+                document.getElementById('node-info').textContent = `${info.node_name} (${info.node_id})`;
+                document.getElementById('speedtest-url').textContent = `${window.location.origin}/speedtest`;
+            } catch (e) {
+                document.getElementById('node-info').textContent = 'Node info unavailable';
+            }
+        }
+        
+        function showPanel(name) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(`panel-${name}`).classList.add('active');
+            event.target.classList.add('active');
+            
+            if (name === 'history') loadHistory();
+            if (name === 'tokens') loadTokens();
+            if (name === 'ping') loadPingSessions();
+        }
+        
+        function updateSpeedtestForm() {
+            const mode = document.getElementById('speedtest-mode').value;
+            document.getElementById('speedtest-server-mode').style.display = mode === 'server' ? 'block' : 'none';
+            document.getElementById('speedtest-client-mode').style.display = mode === 'client' ? 'block' : 'none';
+        }
+        
+        function copySpeedtestUrl() {
+            navigator.clipboard.writeText(document.getElementById('speedtest-url').textContent);
+            event.target.textContent = 'Copied!';
+            setTimeout(() => event.target.textContent = 'Copy Link', 2000);
+        }
+        
+        async function runTest(testType, config, resultDiv, btn) {
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            document.getElementById(resultDiv).style.display = 'block';
+            document.getElementById(resultDiv).innerHTML = '<div class="loading">Running test...</div>';
+            
+            try {
+                const resp = await fetch('/api/tests', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ test_type: testType, config })
+                });
+                const { id } = await resp.json();
+                
+                // Poll for result
+                let result;
+                for (let i = 0; i < 120; i++) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    const statusResp = await fetch(`/api/tests/${id}`);
+                    result = await statusResp.json();
+                    if (result.status !== 'running') break;
+                }
+                
+                return result;
+            } catch (e) {
+                return { error: e.message };
+            } finally {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.originalText || 'Run';
+            }
+        }
+        
+        async function runTraceroute() {
+            const btn = document.getElementById('btn-traceroute');
+            btn.dataset.originalText = btn.textContent;
+            
+            const result = await runTest('traceroute', {
+                target: document.getElementById('traceroute-target').value,
+                protocol: document.getElementById('traceroute-protocol').value,
+                max_hops: parseInt(document.getElementById('traceroute-maxhops').value)
+            }, 'traceroute-result', btn);
+            
+            displayTracerouteResult(result);
+        }
+        
+        function displayTracerouteResult(result) {
+            const div = document.getElementById('traceroute-result');
+            if (result.error || result.result?.error) {
+                div.innerHTML = `<div class="error-msg">${result.error || result.result.error}</div>`;
+                return;
+            }
+            
+            const data = result.result;
+            let html = `<p><strong>Target:</strong> ${data.target} (${data.resolved_ip || 'unresolved'})</p>`;
+            html += `<table class="hop-table"><tr><th>Hop</th><th>IP</th><th>Hostname</th><th>RTT</th></tr>`;
+            
+            for (const hop of data.hops || []) {
+                const rowClass = hop.timeout ? 'hop-timeout' : '';
+                html += `<tr class="${rowClass}">
+                    <td>${hop.hop}</td>
+                    <td>${hop.ip || '*'}</td>
+                    <td>${hop.hostname || '-'}</td>
+                    <td>${hop.timeout ? '* * *' : (hop.rtt_ms?.toFixed(2) + ' ms')}</td>
+                </tr>`;
+            }
+            html += '</table>';
+            div.innerHTML = html;
+        }
+        
+        async function runMTR() {
+            const btn = document.getElementById('btn-mtr');
+            btn.dataset.originalText = btn.textContent;
+            
+            const result = await runTest('mtr', {
+                target: document.getElementById('mtr-target').value,
+                count: parseInt(document.getElementById('mtr-count').value),
+                max_hops: parseInt(document.getElementById('mtr-maxhops').value)
+            }, 'mtr-result', btn);
+            
+            displayMTRResult(result);
+        }
+        
+        function displayMTRResult(result) {
+            const div = document.getElementById('mtr-result');
+            if (result.error || result.result?.error) {
+                div.innerHTML = `<div class="error-msg">${result.error || result.result.error}</div>`;
+                return;
+            }
+            
+            const data = result.result;
+            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Packets:</strong> ${data.packet_count}</p>`;
+            html += `<table class="hop-table"><tr><th>Hop</th><th>Host</th><th>Loss%</th><th>Sent</th><th>Recv</th><th>Min</th><th>Avg</th><th>Max</th><th>Jitter</th></tr>`;
+            
+            for (const hop of data.hops || []) {
+                const lossClass = hop.loss_percent > 5 ? (hop.loss_percent > 20 ? 'hop-error' : 'hop-warning') : '';
+                html += `<tr class="${lossClass}">
+                    <td>${hop.hop}</td>
+                    <td>${hop.hostname || hop.ip || '???'}</td>
+                    <td>${hop.loss_percent?.toFixed(1)}%</td>
+                    <td>${hop.sent}</td>
+                    <td>${hop.received}</td>
+                    <td>${hop.rtt_min?.toFixed(1) || '-'}</td>
+                    <td>${hop.rtt_avg?.toFixed(1) || '-'}</td>
+                    <td>${hop.rtt_max?.toFixed(1) || '-'}</td>
+                    <td>${hop.rtt_jitter?.toFixed(1) || '-'}</td>
+                </tr>`;
+            }
+            html += '</table>';
+            div.innerHTML = html;
+        }
+        
+        async function runDNS() {
+            const btn = document.getElementById('btn-dns');
+            btn.dataset.originalText = btn.textContent;
+            
+            const result = await runTest('dns', {
+                query: document.getElementById('dns-query').value,
+                record_type: document.getElementById('dns-type').value,
+                server: document.getElementById('dns-server').value || null
+            }, 'dns-result', btn);
+            
+            displayDNSResult(result);
+        }
+        
+        function displayDNSResult(result) {
+            const div = document.getElementById('dns-result');
+            if (result.error || result.result?.error) {
+                div.innerHTML = `<div class="error-msg">${result.error || result.result.error}</div>`;
+                return;
+            }
+            
+            const data = result.result;
+            let html = `<p><strong>Query:</strong> ${data.query} (${data.record_type}) | <strong>Server:</strong> ${data.server} | <strong>Time:</strong> ${data.response_time_ms?.toFixed(2)} ms</p>`;
+            
+            if (data.answers?.length) {
+                html += '<table class="hop-table"><tr><th>Value</th><th>TTL</th></tr>';
+                for (const ans of data.answers) {
+                    html += `<tr><td>${ans.value}</td><td>${ans.ttl}</td></tr>`;
+                }
+                html += '</table>';
+            } else {
+                html += '<p>No records found</p>';
+            }
+            div.innerHTML = html;
+        }
+        
+        async function runTCPCheck() {
+            const result = await runTest('tcp_check', {
+                host: document.getElementById('tcp-host').value,
+                port: parseInt(document.getElementById('tcp-port').value)
+            }, 'tcp-result', event.target);
+            
+            const div = document.getElementById('tcp-result');
+            const data = result.result;
+            
+            if (data.open) {
+                div.innerHTML = `<div class="success-msg">
+                    <strong>Port ${data.port} is OPEN</strong><br>
+                    Host: ${data.host} (${data.resolved_ip})<br>
+                    Service: ${data.service}<br>
+                    Connection time: ${data.connection_time_ms?.toFixed(2)} ms
+                    ${data.banner ? `<br>Banner: ${data.banner}` : ''}
+                </div>`;
+            } else {
+                div.innerHTML = `<div class="error-msg">
+                    <strong>Port ${data.port} is CLOSED/FILTERED</strong><br>
+                    ${data.error}
+                </div>`;
+            }
+        }
+        
+        async function runSSLCheck() {
+            const result = await runTest('ssl_check', {
+                host: document.getElementById('tcp-host').value,
+                port: parseInt(document.getElementById('tcp-port').value)
+            }, 'tcp-result', event.target);
+            
+            const div = document.getElementById('tcp-result');
+            const data = result.result;
+            
+            if (data.valid) {
+                const cert = data.certificate;
+                const daysClass = cert.days_until_expiry < 30 ? 'error-msg' : (cert.days_until_expiry < 90 ? 'warning' : 'success-msg');
+                div.innerHTML = `<div class="${daysClass}">
+                    <strong>SSL Certificate Valid</strong><br>
+                    Common Name: ${cert.common_name}<br>
+                    Issuer: ${cert.issuer?.organizationName || cert.issuer?.commonName}<br>
+                    Expires: ${cert.not_after} (${cert.days_until_expiry} days)<br>
+                    TLS Version: ${data.tls_version}<br>
+                    Cipher: ${data.cipher?.name} (${data.cipher?.bits} bits)
+                </div>`;
+            } else {
+                div.innerHTML = `<div class="error-msg"><strong>SSL Check Failed</strong><br>${data.error}</div>`;
+            }
+        }
+        
+        async function startPing() {
+            const resp = await fetch('/api/ping/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target: document.getElementById('ping-target').value,
+                    interval: parseFloat(document.getElementById('ping-interval').value),
+                    duration: parseInt(document.getElementById('ping-duration').value)
+                })
+            });
+            const result = await resp.json();
+            if (result.session_id) {
+                loadPingSessions();
+            }
+        }
+        
+        async function loadPingSessions() {
+            const resp = await fetch('/api/ping');
+            const sessions = await resp.json();
+            
+            const div = document.getElementById('ping-sessions');
+            if (!sessions.length) {
+                div.innerHTML = '<p>No active ping sessions</p>';
+                return;
+            }
+            
+            div.innerHTML = sessions.map(s => `
+                <div class="test-item">
+                    <div>
+                        <strong>${s.target}</strong> - ${s.status}
+                        <br><small>Started: ${new Date(s.started_at).toLocaleString()} | Packets: ${s.packets_sent}</small>
+                    </div>
+                    <div>
+                        <button class="btn btn-secondary" onclick="viewPingSession(${s.session_id})">View</button>
+                        ${s.status === 'running' ? `<button class="btn btn-danger" onclick="stopPing(${s.session_id})">Stop</button>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        async function stopPing(id) {
+            await fetch(`/api/ping/${id}/stop`, { method: 'POST' });
+            loadPingSessions();
+        }
+        
+        async function viewPingSession(id) {
+            const resp = await fetch(`/api/ping/${id}`);
+            const data = await resp.json();
+            
+            alert(`Ping to ${data.target}\n\nPackets: ${data.stats.packets_sent} sent, ${data.stats.packets_received} received\nLoss: ${data.stats.loss_percent?.toFixed(1)}%\nRTT: min=${data.stats.rtt_min?.toFixed(1)}ms avg=${data.stats.rtt_avg?.toFixed(1)}ms max=${data.stats.rtt_max?.toFixed(1)}ms\nJitter: ${data.stats.rtt_jitter?.toFixed(1)}ms`);
+        }
+        
+        async function createToken() {
+            const resp = await fetch('/api/tokens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customer_id: document.getElementById('token-customer').value || null,
+                    expires_hours: parseInt(document.getElementById('token-expires').value),
+                    max_uses: parseInt(document.getElementById('token-uses').value),
+                    note: document.getElementById('token-note').value || null
+                })
+            });
+            const token = await resp.json();
+            
+            document.getElementById('new-token-url').textContent = token.test_url;
+            document.getElementById('token-created').style.display = 'block';
+            loadTokens();
+        }
+        
+        function copyNewTokenUrl() {
+            navigator.clipboard.writeText(document.getElementById('new-token-url').textContent);
+            event.target.textContent = 'Copied!';
+            setTimeout(() => event.target.textContent = 'Copy Link', 2000);
+        }
+        
+        async function loadTokens() {
+            const resp = await fetch('/api/tokens');
+            const tokens = await resp.json();
+            
+            const div = document.getElementById('token-list');
+            if (!tokens.length) {
+                div.innerHTML = '<p>No tokens created yet</p>';
+                return;
+            }
+            
+            div.innerHTML = tokens.map(t => `
+                <div class="test-item" style="${t.expired || t.exhausted ? 'opacity:0.6' : ''}">
+                    <div>
+                        <strong>${t.customer_id || 'No customer ID'}</strong>
+                        <span class="status-badge ${t.expired ? 'status-failed' : (t.exhausted ? 'status-running' : 'status-completed')}">
+                            ${t.expired ? 'Expired' : (t.exhausted ? 'Used up' : 'Active')}
+                        </span>
+                        <br><small>Token: ${t.token} | Uses: ${t.use_count}/${t.max_uses} | Expires: ${new Date(t.expires_at).toLocaleString()}</small>
+                    </div>
+                    <button class="btn btn-danger" onclick="deleteToken(${t.id})">Delete</button>
+                </div>
+            `).join('');
+        }
+        
+        async function deleteToken(id) {
+            if (!confirm('Delete this token?')) return;
+            await fetch(`/api/tokens/${id}`, { method: 'DELETE' });
+            loadTokens();
+        }
+        
+        // iPerf3 Functions
+        function updateIperfForm() {
+            const mode = document.getElementById('iperf-mode').value;
+            document.getElementById('iperf-client-form').style.display = mode === 'client' ? 'block' : 'none';
+            document.getElementById('iperf-server-form').style.display = mode === 'server' ? 'block' : 'none';
+        }
+        
+        async function runIperf() {
+            const btn = document.getElementById('btn-iperf');
+            btn.dataset.originalText = btn.textContent;
+            
+            const mode = document.getElementById('iperf-mode').value;
+            let config = {
+                mode: mode,
+                protocol: document.getElementById('iperf-protocol').value
+            };
+            
+            if (mode === 'client') {
+                config.server = document.getElementById('iperf-server').value;
+                config.port = parseInt(document.getElementById('iperf-port').value);
+                config.duration = parseInt(document.getElementById('iperf-duration').value);
+                config.parallel = parseInt(document.getElementById('iperf-parallel').value);
+            } else {
+                config.port = parseInt(document.getElementById('iperf-listen-port').value);
+                config.one_off = document.getElementById('iperf-oneoff').checked;
+            }
+            
+            const result = await runTest('iperf', config, 'iperf-result', btn);
+            displayIperfResult(result);
+        }
+        
+        function displayIperfResult(result) {
+            const div = document.getElementById('iperf-result');
+            if (result.error || result.result?.error) {
+                div.innerHTML = `<div class="error-msg">${result.error || result.result.error}</div>`;
+                return;
+            }
+            
+            const data = result.result;
+            let html = '';
+            
+            if (data.download_mbps !== undefined) {
+                html += `<div class="metric-grid">
+                    <div class="metric"><div class="metric-value">${data.download_mbps}</div><div class="metric-label">Download Mbps</div></div>
+                    <div class="metric"><div class="metric-value">${data.upload_mbps}</div><div class="metric-label">Upload Mbps</div></div>
+                </div>`;
+                
+                if (data.sent) {
+                    html += `<p><strong>Sent:</strong> ${(data.sent.bytes / 1024 / 1024).toFixed(2)} MB | Retransmits: ${data.sent.retransmits || 0}</p>`;
+                }
+                if (data.received) {
+                    html += `<p><strong>Received:</strong> ${(data.received.bytes / 1024 / 1024).toFixed(2)} MB</p>`;
+                }
+            } else if (data.mode === 'server') {
+                html += `<div class="success-msg">Server completed. Check raw output below.</div>`;
+            }
+            
+            html += `<details><summary>Raw Output</summary><pre>${JSON.stringify(data, null, 2)}</pre></details>`;
+            div.innerHTML = html;
+        }
+        
+        // Packet Capture Functions
+        function updateCaptureForm() {
+            const method = document.getElementById('capture-method').value;
+            document.getElementById('capture-count-form').style.display = method === 'count' ? 'block' : 'none';
+            document.getElementById('capture-duration-form').style.display = method === 'duration' ? 'block' : 'none';
+        }
+        
+        function updateCaptureFilter() {
+            const preset = document.getElementById('capture-preset').value;
+            document.getElementById('capture-filter').value = preset;
+        }
+        
+        async function runCapture() {
+            const btn = document.getElementById('btn-capture');
+            btn.dataset.originalText = btn.textContent;
+            
+            const method = document.getElementById('capture-method').value;
+            let config = {
+                interface: document.getElementById('capture-interface').value,
+                filter: document.getElementById('capture-filter').value || null
+            };
+            
+            if (method === 'count') {
+                config.count = parseInt(document.getElementById('capture-count').value);
+            } else {
+                config.duration = parseInt(document.getElementById('capture-duration').value);
+            }
+            
+            const result = await runTest('packet_capture', config, 'capture-result', btn);
+            displayCaptureResult(result);
+            loadCaptureFiles();
+        }
+        
+        function displayCaptureResult(result) {
+            const div = document.getElementById('capture-result');
+            if (result.error || result.result?.error) {
+                const errData = result.result || result;
+                let errHtml = `<div class="error-msg"><strong>Capture Failed</strong><br>${errData.error}`;
+                if (errData.stderr) {
+                    errHtml += `<br><br><strong>Details:</strong><pre style="margin-top:8px;white-space:pre-wrap;font-size:0.85em;">${errData.stderr}</pre>`;
+                }
+                if (errData.command) {
+                    errHtml += `<br><strong>Command:</strong> <code>${errData.command}</code>`;
+                }
+                errHtml += `</div>`;
+                div.innerHTML = errHtml;
+                return;
+            }
+            
+            const data = result.result;
+            
+            // Check for 0 bytes which usually indicates a problem
+            if (data.file_size === 0) {
+                let warnHtml = `<div class="error-msg" style="background:#fff3cd;border-color:#ffc107;color:#856404;">
+                    <strong>Capture Complete - No Data</strong><br>
+                    File: ${data.output_file}<br>
+                    Size: 0 B<br><br>
+                    <strong>Possible causes:</strong><br>
+                    • No traffic matching the filter<br>
+                    • Permission denied (try running server with sudo)<br>
+                    • Interface not available`;
+                if (data.stderr) {
+                    warnHtml += `<br><br><strong>tcpdump output:</strong><pre style="margin-top:8px;white-space:pre-wrap;font-size:0.85em;">${data.stderr}</pre>`;
+                }
+                warnHtml += `</div>`;
+                div.innerHTML = warnHtml;
+                return;
+            }
+            
+            div.innerHTML = `<div class="success-msg">
+                <strong>Capture Complete</strong><br>
+                File: ${data.output_file}<br>
+                Size: ${data.file_size_human}<br>
+                Packets: ${data.packet_count || 'N/A'}
+            </div>`;
+        }
+        
+        async function loadCaptureFiles() {
+            // This would need a backend endpoint to list captures
+            // For now, show a placeholder
+            document.getElementById('capture-files').innerHTML = '<p class="help-text">Capture files are stored on the server in /tmp/</p>';
+        }
+        
+        async function loadHistory() {
+            const filter = document.getElementById('history-filter')?.value || '';
+            const resp = await fetch(`/api/tests?limit=50${filter ? `&test_type=${filter}` : ''}`);
+            const tests = await resp.json();
+            
+            const div = document.getElementById('history-list');
+            if (!tests.length) {
+                div.innerHTML = '<p>No tests yet</p>';
+                return;
+            }
+            
+            div.innerHTML = tests.map(t => `
+                <div class="test-item">
+                    <div>
+                        <strong>#${t.id}</strong> - ${t.test_type}
+                        <span class="status-badge status-${t.status}">${t.status}</span>
+                        ${t.customer_id ? `<br><small>Customer: ${t.customer_id}</small>` : ''}
+                        <br><small>${new Date(t.created_at).toLocaleString()}</small>
+                    </div>
+                    <button class="btn btn-secondary" onclick="viewTest(${t.id})">View</button>
+                </div>
+            `).join('');
+        }
+        
+        async function viewTest(id) {
+            const resp = await fetch(`/api/tests/${id}`);
+            const test = await resp.json();
+            
+            const resultStr = JSON.stringify(test.result, null, 2);
+            const configStr = JSON.stringify(test.config, null, 2);
+            
+            // Simple modal
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
+            modal.innerHTML = `
+                <div style="background:white;padding:30px;border-radius:12px;max-width:800px;max-height:80vh;overflow:auto;width:90%;">
+                    <h3>Test #${test.id} - ${test.test_type}</h3>
+                    <p><strong>Status:</strong> ${test.status} | <strong>Created:</strong> ${new Date(test.created_at).toLocaleString()}</p>
+                    ${test.customer_id ? `<p><strong>Customer:</strong> ${test.customer_id}</p>` : ''}
+                    ${test.client_ip ? `<p><strong>Client IP:</strong> ${test.client_ip}</p>` : ''}
+                    <h4>Config</h4>
+                    <pre style="background:#2d3748;color:#e2e8f0;padding:15px;border-radius:6px;overflow:auto;max-height:150px;">${configStr}</pre>
+                    <h4>Result</h4>
+                    <pre style="background:#2d3748;color:#e2e8f0;padding:15px;border-radius:6px;overflow:auto;max-height:300px;">${resultStr}</pre>
+                    <button class="btn btn-secondary" onclick="this.closest('div').parentElement.remove()">Close</button>
+                </div>
+            `;
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            document.body.appendChild(modal);
+        }
+    </script>
+</body>
+</html>
