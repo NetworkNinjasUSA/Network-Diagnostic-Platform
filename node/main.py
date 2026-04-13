@@ -468,9 +468,13 @@ async def get_test(test_id: int, db: Session = Depends(get_db)):
 
 # ============== Live MTR Streaming Endpoint ==============
 
+# Track active MTR sessions so they can be stopped
+_active_mtr_sessions = {}  # session_id -> asyncio.subprocess.Process
+
+
 @app.get("/api/mtr/stream")
-async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol: str = "icmp"):
-    """Stream live MTR results via Server-Sent Events."""
+async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
+    """Stream live MTR results via Server-Sent Events. Runs until client disconnects or stopped."""
     if not target:
         raise HTTPException(status_code=400, detail="Target is required")
 
@@ -481,26 +485,23 @@ async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol:
     except socket.gaierror:
         pass
 
-    async def mtr_event_stream():
-        import subprocess
-        import re
+    session_id = os.urandom(4).hex()
 
-        # Use mtr in report-wide mode with 1-cycle intervals so we can
-        # run successive single-cycle passes and stream each update
-        cmd = ["mtr", "--raw", "-c", str(count), "-m", str(max_hops)]
+    async def mtr_event_stream():
+        # Run mtr with a very high count — effectively infinite until stopped
+        cmd = ["mtr", "--raw", "-c", "9999", "-m", str(max_hops)]
         if protocol == "tcp":
             cmd.append("--tcp")
         elif protocol == "udp":
             cmd.append("--udp")
         cmd.append(target)
 
-        # Need sudo for ICMP
         needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
         if needs_sudo and protocol in ("icmp", "tcp"):
             cmd = ["sudo"] + cmd
 
-        # Track hop stats across cycles
-        hop_stats = {}  # hop_num -> {ip, sent, received, rtts: []}
+        hop_stats = {}
+        proc = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -508,15 +509,13 @@ async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
+            _active_mtr_sessions[session_id] = proc
 
-            # mtr --raw outputs lines like:
-            # h <hop> <ip>           (host for hop)
-            # p <hop> <microseconds> (ping result)
-            # d <hop> <ip>           (DNS result)
-            # Lines come in as each cycle completes
+            # Send session ID so frontend can request stop
+            yield f"data: {json.dumps({'session_id': session_id, 'status': 'started'})}\n\n"
 
-            last_send_time = 0
             cycle_count = 0
+            seen_in_cycle = set()
 
             async for raw_line in proc.stdout:
                 line = raw_line.decode().strip()
@@ -524,7 +523,7 @@ async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol:
                     continue
 
                 parts = line.split()
-                if len(parts) < 3:
+                if len(parts) < 2:
                     continue
 
                 line_type = parts[0]
@@ -546,108 +545,58 @@ async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol:
                 hop = hop_stats[hop_num]
 
                 if line_type == 'h':
-                    # Host line
-                    hop["ip"] = parts[2] if parts[2] != '???' else None
+                    hop["ip"] = parts[2] if len(parts) > 2 and parts[2] != '???' else None
                 elif line_type == 'd':
-                    # DNS resolved hostname
-                    hop["hostname"] = parts[2]
-                elif line_type == 'p':
-                    # Ping result in microseconds
-                    hop["sent"] += 1
-                    try:
-                        rtt_us = int(parts[2])
-                        rtt_ms = rtt_us / 1000.0
-                        hop["received"] += 1
-                        hop["rtts"].append(rtt_ms)
-                    except ValueError:
-                        pass
-
-                    # Check if this is the highest hop we know about
-                    # If so, we've completed a cycle — send an update
-                    max_known_hop = max(hop_stats.keys())
-                    if hop_num == max_known_hop:
+                    hop["hostname"] = parts[2] if len(parts) > 2 else None
+                elif line_type in ('p', 'x'):
+                    # Detect cycle boundary: seeing a hop we already processed
+                    if hop_num in seen_in_cycle:
                         cycle_count += 1
-                        # Build snapshot of all hops
-                        hops_snapshot = []
-                        for h_num in sorted(hop_stats.keys()):
-                            h = hop_stats[h_num]
-                            rtts = h["rtts"]
-                            total_sent = h["sent"]
-                            total_recv = h["received"]
-                            loss = ((total_sent - total_recv) / total_sent * 100) if total_sent > 0 else 100
+                        seen_in_cycle.clear()
 
-                            hops_snapshot.append({
-                                "hop": h["hop"],
-                                "ip": h["ip"],
-                                "hostname": h["hostname"] or h["ip"],
-                                "loss_percent": round(loss, 1),
-                                "sent": total_sent,
-                                "received": total_recv,
-                                "rtt_min": round(min(rtts), 1) if rtts else None,
-                                "rtt_avg": round(sum(rtts) / len(rtts), 1) if rtts else None,
-                                "rtt_max": round(max(rtts), 1) if rtts else None,
-                                "rtt_jitter": round(
-                                    sum(abs(rtts[i] - rtts[i-1]) for i in range(1, len(rtts))) / (len(rtts) - 1), 1
-                                ) if len(rtts) > 1 else None
-                            })
-
+                        hops_snapshot = _build_hops_snapshot(hop_stats)
                         event_data = json.dumps({
                             "target": target,
                             "resolved_ip": resolved_ip,
                             "hops": hops_snapshot,
-                            "packet_count": count,
                             "cycle": cycle_count,
-                            "complete": cycle_count >= count
+                            "complete": False
                         })
                         yield f"data: {event_data}\n\n"
 
-                elif line_type == 'x':
-                    # Timeout
-                    hop["sent"] += 1
+                    seen_in_cycle.add(hop_num)
 
-                    max_known_hop = max(hop_stats.keys()) if hop_stats else 0
-                    if hop_num == max_known_hop:
-                        cycle_count += 1
-                        hops_snapshot = []
-                        for h_num in sorted(hop_stats.keys()):
-                            h = hop_stats[h_num]
-                            rtts = h["rtts"]
-                            total_sent = h["sent"]
-                            total_recv = h["received"]
-                            loss = ((total_sent - total_recv) / total_sent * 100) if total_sent > 0 else 100
-
-                            hops_snapshot.append({
-                                "hop": h["hop"],
-                                "ip": h["ip"],
-                                "hostname": h["hostname"] or h["ip"],
-                                "loss_percent": round(loss, 1),
-                                "sent": total_sent,
-                                "received": total_recv,
-                                "rtt_min": round(min(rtts), 1) if rtts else None,
-                                "rtt_avg": round(sum(rtts) / len(rtts), 1) if rtts else None,
-                                "rtt_max": round(max(rtts), 1) if rtts else None,
-                                "rtt_jitter": round(
-                                    sum(abs(rtts[i] - rtts[i-1]) for i in range(1, len(rtts))) / (len(rtts) - 1), 1
-                                ) if len(rtts) > 1 else None
-                            })
-
-                        event_data = json.dumps({
-                            "target": target,
-                            "resolved_ip": resolved_ip,
-                            "hops": hops_snapshot,
-                            "packet_count": count,
-                            "cycle": cycle_count,
-                            "complete": cycle_count >= count
-                        })
-                        yield f"data: {event_data}\n\n"
+                    if line_type == 'p':
+                        hop["sent"] += 1
+                        try:
+                            rtt_us = int(parts[2])
+                            rtt_ms = rtt_us / 1000.0
+                            hop["received"] += 1
+                            hop["rtts"].append(rtt_ms)
+                        except (ValueError, IndexError):
+                            pass
+                    else:
+                        hop["sent"] += 1
 
             await proc.wait()
 
-            # Send final complete event
-            yield f"data: {json.dumps({'complete': True})}\n\n"
+            # Final update
+            cycle_count += 1
+            hops_snapshot = _build_hops_snapshot(hop_stats)
+            yield f"data: {json.dumps({'target': target, 'resolved_ip': resolved_ip, 'hops': hops_snapshot, 'cycle': cycle_count, 'complete': True})}\n\n"
 
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            _active_mtr_sessions.pop(session_id, None)
+            if proc and proc.returncode is None:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=3)
+                except Exception:
+                    proc.kill()
 
     return StreamingResponse(
         mtr_event_stream(),
@@ -658,6 +607,47 @@ async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol:
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@app.post("/api/mtr/stop/{session_id}")
+async def stop_mtr(session_id: str):
+    """Stop a running MTR session."""
+    proc = _active_mtr_sessions.get(session_id)
+    if not proc:
+        raise HTTPException(status_code=404, detail="MTR session not found")
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    _active_mtr_sessions.pop(session_id, None)
+    return {"stopped": session_id}
+
+
+def _build_hops_snapshot(hop_stats: dict) -> list:
+    """Build a snapshot of all hop statistics for SSE emission."""
+    hops_snapshot = []
+    for h_num in sorted(hop_stats.keys()):
+        h = hop_stats[h_num]
+        rtts = h["rtts"]
+        total_sent = h["sent"]
+        total_recv = h["received"]
+        loss = ((total_sent - total_recv) / total_sent * 100) if total_sent > 0 else 100
+
+        hops_snapshot.append({
+            "hop": h["hop"],
+            "ip": h["ip"],
+            "hostname": h["hostname"] or h["ip"],
+            "loss_percent": round(loss, 1),
+            "sent": total_sent,
+            "received": total_recv,
+            "rtt_min": round(min(rtts), 1) if rtts else None,
+            "rtt_avg": round(sum(rtts) / len(rtts), 1) if rtts else None,
+            "rtt_max": round(max(rtts), 1) if rtts else None,
+            "rtt_jitter": round(
+                sum(abs(rtts[i] - rtts[i - 1]) for i in range(1, len(rtts))) / (len(rtts) - 1), 1
+            ) if len(rtts) > 1 else None
+        })
+    return hops_snapshot
 
 
 # ============== Continuous Ping Endpoints ==============

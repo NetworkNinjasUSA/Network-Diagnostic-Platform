@@ -266,22 +266,19 @@
         <div id="panel-mtr" class="panel">
             <div class="card">
                 <h2>MTR (My Traceroute)</h2>
-                <p class="help-text" style="margin-bottom:15px;">Combines traceroute and ping for detailed path analysis with packet loss statistics.</p>
+                <p class="help-text" style="margin-bottom:15px;">Live path analysis with packet loss statistics. Start monitoring and stop when done.</p>
                 <div class="form-row">
                     <div class="form-group">
                         <label>Target Host</label>
                         <input type="text" id="mtr-target" placeholder="8.8.8.8 or google.com">
                     </div>
                     <div class="form-group">
-                        <label>Packet Count</label>
-                        <input type="number" id="mtr-count" value="10" min="1" max="100">
-                    </div>
-                    <div class="form-group">
                         <label>Max Hops</label>
                         <input type="number" id="mtr-maxhops" value="30" min="1" max="64">
                     </div>
                 </div>
-                <button class="btn btn-primary" onclick="runMTR()" id="btn-mtr">Run MTR</button>
+                <button class="btn btn-primary" onclick="startMTR()" id="btn-mtr-start">Start MTR</button>
+                <button class="btn btn-danger" onclick="stopMTR()" id="btn-mtr-stop" style="display:none;">Stop MTR</button>
                 <div id="mtr-result" class="result-box" style="display:none;"></div>
             </div>
         </div>
@@ -667,56 +664,82 @@
             div.innerHTML = html;
         }
         
-        async function runMTR() {
-            const btn = document.getElementById('btn-mtr');
-            const div = document.getElementById('mtr-result');
-            btn.disabled = true;
-            btn.textContent = 'Running...';
-            div.style.display = 'block';
-            div.innerHTML = '<div class="loading">Connecting to MTR stream...</div>';
+        let mtrEventSource = null;
+        let mtrSessionId = null;
 
+        function startMTR() {
             const target = document.getElementById('mtr-target').value;
-            const count = document.getElementById('mtr-count').value;
+            if (!target) return;
+
             const maxHops = document.getElementById('mtr-maxhops').value;
+            const div = document.getElementById('mtr-result');
 
-            const params = new URLSearchParams({ target, count, max_hops: maxHops });
-            const evtSource = new EventSource(`/api/mtr/stream?${params}`);
+            document.getElementById('btn-mtr-start').style.display = 'none';
+            document.getElementById('btn-mtr-stop').style.display = 'inline-block';
+            document.getElementById('mtr-target').disabled = true;
+            document.getElementById('mtr-maxhops').disabled = true;
+            div.style.display = 'block';
+            div.innerHTML = '<div class="loading">Starting MTR...</div>';
 
-            evtSource.onmessage = (event) => {
+            const params = new URLSearchParams({ target, max_hops: maxHops });
+            mtrEventSource = new EventSource(`/api/mtr/stream?${params}`);
+
+            mtrEventSource.onmessage = (event) => {
                 const data = JSON.parse(event.data);
 
                 if (data.error) {
                     div.innerHTML = `<div class="error-msg">${data.error}</div>`;
-                    evtSource.close();
-                    btn.disabled = false;
-                    btn.textContent = 'Run MTR';
+                    cleanupMTR();
+                    return;
+                }
+
+                if (data.session_id) {
+                    mtrSessionId = data.session_id;
                     return;
                 }
 
                 if (data.complete && !data.hops) {
-                    evtSource.close();
-                    btn.disabled = false;
-                    btn.textContent = 'Run MTR';
+                    cleanupMTR();
                     return;
                 }
 
                 displayLiveMTR(data, div);
 
                 if (data.complete) {
-                    evtSource.close();
-                    btn.disabled = false;
-                    btn.textContent = 'Run MTR';
+                    cleanupMTR();
                 }
             };
 
-            evtSource.onerror = () => {
-                evtSource.close();
-                btn.disabled = false;
-                btn.textContent = 'Run MTR';
-                if (div.innerHTML.includes('Connecting')) {
+            mtrEventSource.onerror = () => {
+                if (div.innerHTML.includes('Starting')) {
                     div.innerHTML = '<div class="error-msg">Failed to connect to MTR stream. Is mtr installed?</div>';
                 }
+                cleanupMTR();
             };
+        }
+
+        async function stopMTR() {
+            if (mtrSessionId) {
+                try {
+                    await fetch(`/api/mtr/stop/${mtrSessionId}`, { method: 'POST' });
+                } catch (e) {}
+            }
+            if (mtrEventSource) {
+                mtrEventSource.close();
+            }
+            cleanupMTR();
+        }
+
+        function cleanupMTR() {
+            if (mtrEventSource) {
+                mtrEventSource.close();
+                mtrEventSource = null;
+            }
+            mtrSessionId = null;
+            document.getElementById('btn-mtr-start').style.display = 'inline-block';
+            document.getElementById('btn-mtr-stop').style.display = 'none';
+            document.getElementById('mtr-target').disabled = false;
+            document.getElementById('mtr-maxhops').disabled = false;
         }
 
         function displayLiveMTR(data, div) {
@@ -724,9 +747,9 @@
             const lastHop = hops.length > 0 ? hops[hops.length - 1] : null;
             const destHasNoLoss = lastHop && lastHop.loss_percent === 0;
 
-            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Cycle:</strong> ${data.cycle}/${data.packet_count}${data.complete ? ' ✓ Complete' : ' ⏳ Running...'}</p>`;
+            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Cycles:</strong> ${data.cycle} | ⏳ Live</p>`;
 
-            if (destHasNoLoss && data.cycle > 1) {
+            if (destHasNoLoss && data.cycle > 2) {
                 html += `<p class="help-text" style="margin:10px 0;padding:8px 12px;background:#e8f4fd;border-radius:4px;color:#31708f;">
                     ℹ️ Destination shows 0% loss. Intermediate hops showing loss are likely deprioritizing ICMP control-plane traffic rather than dropping real traffic.
                 </p>`;
