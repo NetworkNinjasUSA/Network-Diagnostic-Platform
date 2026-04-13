@@ -487,28 +487,23 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
     session_id = os.urandom(4).hex()
 
     async def mtr_event_stream():
-        # Build base command for single-cycle mtr with JSON output
-        base_cmd = ["mtr", "--json", "-c", "1", "-m", str(max_hops), "--no-dns"]
-        dns_cmd = ["mtr", "--json", "-c", "1", "-m", str(max_hops)]
+        # All cycles use --no-dns for consistency; first cycle also does a DNS lookup
+        cmd = ["mtr", "--json", "-c", "1", "-m", str(max_hops), "--no-dns"]
 
         if protocol == "tcp":
-            base_cmd.append("--tcp")
-            dns_cmd.append("--tcp")
+            cmd.append("--tcp")
         elif protocol == "udp":
-            base_cmd.append("--udp")
-            dns_cmd.append("--udp")
+            cmd.append("--udp")
 
-        base_cmd.append(target)
-        dns_cmd.append(target)
+        cmd.append(target)
 
         needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
         if needs_sudo and protocol in ("icmp", "tcp"):
-            base_cmd = ["sudo"] + base_cmd
-            dns_cmd = ["sudo"] + dns_cmd
+            cmd = ["sudo", "-n"] + cmd
 
-        # Track cumulative stats per hop (keyed by IP)
-        hop_stats = {}  # ip -> {hop, ip, hostname, sent, received, rtts}
-        hop_order = []  # ordered list of IPs as discovered
+        # Track cumulative stats per hop keyed by position index
+        hop_stats = {}  # position (int) -> {hop, ip, hostname, sent, received, rtts}
+        hostnames = {}  # ip -> hostname (resolved once on first cycle)
         cancel_event = asyncio.Event()
         _active_mtr_sessions[session_id] = cancel_event
 
@@ -516,13 +511,10 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
             yield f"data: {json.dumps({'session_id': session_id, 'status': 'started'})}\n\n"
 
             cycle = 0
-            # First cycle with DNS to get hostnames
-            first_cycle = True
+            dns_resolved = False
 
             while not cancel_event.is_set():
                 cycle += 1
-                cmd = dns_cmd if first_cycle else base_cmd
-                first_cycle = False
 
                 try:
                     proc = await asyncio.create_subprocess_exec(
@@ -542,49 +534,63 @@ async def stream_mtr(target: str, max_hops: int = 30, protocol: str = "icmp"):
                 try:
                     data = json.loads(stdout.decode())
                 except (json.JSONDecodeError, UnicodeDecodeError):
+                    # Check if sudo failed
+                    err_text = stderr.decode() if stderr else ""
+                    if "password" in err_text.lower() or "sudo" in err_text.lower():
+                        yield f"data: {json.dumps({'error': 'mtr requires sudo. Run: echo \"bigtex ALL=(ALL) NOPASSWD: /usr/bin/mtr\" | sudo tee /etc/sudoers.d/netdiag'})}\n\n"
+                        break
                     continue
 
                 hubs = data.get("report", {}).get("hubs", [])
 
+                # On first cycle, resolve hostnames via a separate DNS lookup
+                if not dns_resolved and hubs:
+                    dns_resolved = True
+                    import socket as _socket
+                    for hub in hubs:
+                        ip = hub.get("host", "???")
+                        if ip != "???" and ip not in hostnames:
+                            try:
+                                hostname_result = _socket.gethostbyaddr(ip)
+                                hostnames[ip] = hostname_result[0]
+                            except (_socket.herror, _socket.gaierror, OSError):
+                                pass
+
                 for i, hub in enumerate(hubs):
-                    host = hub.get("host", "???")
-                    ip = host if host != "???" else f"???-{i}"
+                    ip = hub.get("host", "???")
                     loss_pct = hub.get("Loss%", 0)
                     snt = hub.get("Snt", 0)
 
-                    if ip not in hop_stats:
-                        hop_stats[ip] = {
-                            "hop": i,
-                            "ip": host if host != "???" else None,
-                            "hostname": host if host != "???" else None,
+                    if i not in hop_stats:
+                        hop_stats[i] = {
+                            "hop": i + 1,  # 1-indexed like standard mtr
+                            "ip": ip if ip != "???" else None,
+                            "hostname": hostnames.get(ip),
                             "sent": 0,
                             "received": 0,
                             "rtts": []
                         }
-                        hop_order.append(ip)
 
-                    h = hop_stats[ip]
-                    h["hop"] = i  # Update in case hop position shifts
+                    h = hop_stats[i]
+                    # Update IP if it was previously unknown
+                    if ip != "???" and h["ip"] is None:
+                        h["ip"] = ip
+                    # Update hostname if we have one
+                    if ip in hostnames and not h["hostname"]:
+                        h["hostname"] = hostnames[ip]
+
                     h["sent"] += snt
-
                     received_this_cycle = int(snt * (100 - loss_pct) / 100)
                     h["received"] += received_this_cycle
 
-                    # Collect RTT if we got a response
                     avg_rtt = hub.get("Avg")
-                    best_rtt = hub.get("Best")
-                    worst_rtt = hub.get("Wrst")
                     if received_this_cycle > 0 and avg_rtt is not None:
                         h["rtts"].append(avg_rtt)
 
-                    # Store hostname from DNS cycle
-                    if hub.get("host") and hub["host"] != "???" and not h["hostname"]:
-                        h["hostname"] = hub["host"]
-
                 # Build ordered snapshot
                 hops_snapshot = []
-                for ip_key in hop_order:
-                    h = hop_stats[ip_key]
+                for pos in sorted(hop_stats.keys()):
+                    h = hop_stats[pos]
                     rtts = h["rtts"]
                     total_sent = h["sent"]
                     total_recv = h["received"]

@@ -58,7 +58,7 @@ class TracerouteRunner:
         import os
         needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
         if needs_sudo and protocol in ("icmp", "tcp"):
-            cmd = ["sudo"] + cmd
+            cmd = ["sudo", "-n"] + cmd
         
         try:
             result = subprocess.run(
@@ -67,6 +67,16 @@ class TracerouteRunner:
                 text=True,
                 timeout=max_hops * timeout + 10
             )
+            
+            # Check for sudo failure
+            if result.returncode != 0 and ("sudo" in result.stderr.lower() or "password" in result.stderr.lower()):
+                return {
+                    "target": target,
+                    "resolved_ip": resolved_ip,
+                    "hops": [],
+                    "completed": False,
+                    "error": f"ICMP/TCP traceroute requires root. Configure passwordless sudo or use UDP protocol."
+                }
             
             hops = self._parse_output(result.stdout, system)
             
