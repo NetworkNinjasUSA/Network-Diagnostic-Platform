@@ -746,10 +746,11 @@
             const hops = data.hops || [];
             const lastHop = hops.length > 0 ? hops[hops.length - 1] : null;
             const destHasNoLoss = lastHop && lastHop.loss_percent === 0;
+            const totalSent = hops.length > 0 ? hops[0].sent : 0;
 
-            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Cycles:</strong> ${data.cycle} | ⏳ Live</p>`;
+            let html = `<p><strong>Target:</strong> ${data.target} | ⏳ Live</p>`;
 
-            if (destHasNoLoss && data.cycle > 2) {
+            if (destHasNoLoss && totalSent > 2) {
                 html += `<p class="help-text" style="margin:10px 0;padding:8px 12px;background:#e8f4fd;border-radius:4px;color:#31708f;">
                     ℹ️ Destination shows 0% loss. Intermediate hops showing loss are likely deprioritizing ICMP control-plane traffic rather than dropping real traffic.
                 </p>`;
