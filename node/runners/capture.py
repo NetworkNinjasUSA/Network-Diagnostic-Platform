@@ -10,7 +10,7 @@ class PacketCaptureRunner:
     """Run tcpdump packet captures."""
     
     # Allowed filter tokens to prevent command injection
-    ALLOWED_FILTER_PATTERN = r'^[a-zA-Z0-9\s\.\:\-\/\(\)and or not host port net src dst tcp udp icmp arp proto len greater less]+$'$'
+    ALLOWED_FILTER_PATTERN = r'^[a-zA-Z0-9\s\.\:\-\/\(\)and or not host port net src dst tcp udp icmp arp proto len greater less]+$'
     
     def __init__(self, capture_dir: str = "/tmp"):
         self.capture_dir = capture_dir
