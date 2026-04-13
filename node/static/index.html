@@ -669,30 +669,80 @@
         
         async function runMTR() {
             const btn = document.getElementById('btn-mtr');
-            btn.dataset.originalText = btn.textContent;
-            
-            const result = await runTest('mtr', {
-                target: document.getElementById('mtr-target').value,
-                count: parseInt(document.getElementById('mtr-count').value),
-                max_hops: parseInt(document.getElementById('mtr-maxhops').value)
-            }, 'mtr-result', btn);
-            
-            displayMTRResult(result);
-        }
-        
-        function displayMTRResult(result) {
             const div = document.getElementById('mtr-result');
-            if (result.error || result.result?.error) {
-                div.innerHTML = `<div class="error-msg">${result.error || result.result.error}</div>`;
-                return;
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            div.style.display = 'block';
+            div.innerHTML = '<div class="loading">Connecting to MTR stream...</div>';
+
+            const target = document.getElementById('mtr-target').value;
+            const count = document.getElementById('mtr-count').value;
+            const maxHops = document.getElementById('mtr-maxhops').value;
+
+            const params = new URLSearchParams({ target, count, max_hops: maxHops });
+            const evtSource = new EventSource(`/api/mtr/stream?${params}`);
+
+            evtSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.error) {
+                    div.innerHTML = `<div class="error-msg">${data.error}</div>`;
+                    evtSource.close();
+                    btn.disabled = false;
+                    btn.textContent = 'Run MTR';
+                    return;
+                }
+
+                if (data.complete && !data.hops) {
+                    evtSource.close();
+                    btn.disabled = false;
+                    btn.textContent = 'Run MTR';
+                    return;
+                }
+
+                displayLiveMTR(data, div);
+
+                if (data.complete) {
+                    evtSource.close();
+                    btn.disabled = false;
+                    btn.textContent = 'Run MTR';
+                }
+            };
+
+            evtSource.onerror = () => {
+                evtSource.close();
+                btn.disabled = false;
+                btn.textContent = 'Run MTR';
+                if (div.innerHTML.includes('Connecting')) {
+                    div.innerHTML = '<div class="error-msg">Failed to connect to MTR stream. Is mtr installed?</div>';
+                }
+            };
+        }
+
+        function displayLiveMTR(data, div) {
+            const hops = data.hops || [];
+            const lastHop = hops.length > 0 ? hops[hops.length - 1] : null;
+            const destHasNoLoss = lastHop && lastHop.loss_percent === 0;
+
+            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Cycle:</strong> ${data.cycle}/${data.packet_count}${data.complete ? ' ✓ Complete' : ' ⏳ Running...'}</p>`;
+
+            if (destHasNoLoss && data.cycle > 1) {
+                html += `<p class="help-text" style="margin:10px 0;padding:8px 12px;background:#e8f4fd;border-radius:4px;color:#31708f;">
+                    ℹ️ Destination shows 0% loss. Intermediate hops showing loss are likely deprioritizing ICMP control-plane traffic rather than dropping real traffic.
+                </p>`;
             }
-            
-            const data = result.result;
-            let html = `<p><strong>Target:</strong> ${data.target} | <strong>Packets:</strong> ${data.packet_count}</p>`;
+
             html += `<table class="hop-table"><tr><th>Hop</th><th>Host</th><th>Loss%</th><th>Sent</th><th>Recv</th><th>Min</th><th>Avg</th><th>Max</th><th>Jitter</th></tr>`;
-            
-            for (const hop of data.hops || []) {
-                const lossClass = hop.loss_percent > 5 ? (hop.loss_percent > 20 ? 'hop-error' : 'hop-warning') : '';
+
+            for (const hop of hops) {
+                let lossClass = '';
+                if (hop.loss_percent > 5) {
+                    if (destHasNoLoss) {
+                        lossClass = 'hop-warning';
+                    } else {
+                        lossClass = hop.loss_percent > 20 ? 'hop-error' : 'hop-warning';
+                    }
+                }
                 html += `<tr class="${lossClass}">
                     <td>${hop.hop}</td>
                     <td>${hop.hostname || hop.ip || '???'}</td>

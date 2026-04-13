@@ -54,6 +54,12 @@ class TracerouteRunner:
         else:
             cmd = self._build_unix_cmd(target, protocol, max_hops, timeout, resolve_hostnames)
         
+        # ICMP and TCP traceroute require root privileges
+        import os
+        needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
+        if needs_sudo and protocol in ("icmp", "tcp"):
+            cmd = ["sudo"] + cmd
+        
         try:
             result = subprocess.run(
                 cmd,

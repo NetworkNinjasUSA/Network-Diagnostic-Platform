@@ -1,13 +1,14 @@
 """Network Diagnostic Platform - Test Node Application."""
 from fastapi import FastAPI, Depends, BackgroundTasks, Request, Response, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
 import os
 import sys
+import asyncio
 
 # Add parent directory for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -463,6 +464,200 @@ async def get_test(test_id: int, db: Session = Depends(get_db)):
         "created_at": test.created_at.isoformat(),
         "completed_at": test.completed_at.isoformat() if test.completed_at else None
     }
+
+
+# ============== Live MTR Streaming Endpoint ==============
+
+@app.get("/api/mtr/stream")
+async def stream_mtr(target: str, count: int = 10, max_hops: int = 30, protocol: str = "icmp"):
+    """Stream live MTR results via Server-Sent Events."""
+    if not target:
+        raise HTTPException(status_code=400, detail="Target is required")
+
+    import socket
+    resolved_ip = None
+    try:
+        resolved_ip = socket.gethostbyname(target)
+    except socket.gaierror:
+        pass
+
+    async def mtr_event_stream():
+        import subprocess
+        import re
+
+        # Use mtr in report-wide mode with 1-cycle intervals so we can
+        # run successive single-cycle passes and stream each update
+        cmd = ["mtr", "--raw", "-c", str(count), "-m", str(max_hops)]
+        if protocol == "tcp":
+            cmd.append("--tcp")
+        elif protocol == "udp":
+            cmd.append("--udp")
+        cmd.append(target)
+
+        # Need sudo for ICMP
+        needs_sudo = os.geteuid() != 0 if hasattr(os, 'geteuid') else False
+        if needs_sudo and protocol in ("icmp", "tcp"):
+            cmd = ["sudo"] + cmd
+
+        # Track hop stats across cycles
+        hop_stats = {}  # hop_num -> {ip, sent, received, rtts: []}
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # mtr --raw outputs lines like:
+            # h <hop> <ip>           (host for hop)
+            # p <hop> <microseconds> (ping result)
+            # d <hop> <ip>           (DNS result)
+            # Lines come in as each cycle completes
+
+            last_send_time = 0
+            cycle_count = 0
+
+            async for raw_line in proc.stdout:
+                line = raw_line.decode().strip()
+                if not line:
+                    continue
+
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+
+                line_type = parts[0]
+                try:
+                    hop_num = int(parts[1])
+                except ValueError:
+                    continue
+
+                if hop_num not in hop_stats:
+                    hop_stats[hop_num] = {
+                        "hop": hop_num,
+                        "ip": None,
+                        "hostname": None,
+                        "sent": 0,
+                        "received": 0,
+                        "rtts": []
+                    }
+
+                hop = hop_stats[hop_num]
+
+                if line_type == 'h':
+                    # Host line
+                    hop["ip"] = parts[2] if parts[2] != '???' else None
+                elif line_type == 'd':
+                    # DNS resolved hostname
+                    hop["hostname"] = parts[2]
+                elif line_type == 'p':
+                    # Ping result in microseconds
+                    hop["sent"] += 1
+                    try:
+                        rtt_us = int(parts[2])
+                        rtt_ms = rtt_us / 1000.0
+                        hop["received"] += 1
+                        hop["rtts"].append(rtt_ms)
+                    except ValueError:
+                        pass
+
+                    # Check if this is the highest hop we know about
+                    # If so, we've completed a cycle — send an update
+                    max_known_hop = max(hop_stats.keys())
+                    if hop_num == max_known_hop:
+                        cycle_count += 1
+                        # Build snapshot of all hops
+                        hops_snapshot = []
+                        for h_num in sorted(hop_stats.keys()):
+                            h = hop_stats[h_num]
+                            rtts = h["rtts"]
+                            total_sent = h["sent"]
+                            total_recv = h["received"]
+                            loss = ((total_sent - total_recv) / total_sent * 100) if total_sent > 0 else 100
+
+                            hops_snapshot.append({
+                                "hop": h["hop"],
+                                "ip": h["ip"],
+                                "hostname": h["hostname"] or h["ip"],
+                                "loss_percent": round(loss, 1),
+                                "sent": total_sent,
+                                "received": total_recv,
+                                "rtt_min": round(min(rtts), 1) if rtts else None,
+                                "rtt_avg": round(sum(rtts) / len(rtts), 1) if rtts else None,
+                                "rtt_max": round(max(rtts), 1) if rtts else None,
+                                "rtt_jitter": round(
+                                    sum(abs(rtts[i] - rtts[i-1]) for i in range(1, len(rtts))) / (len(rtts) - 1), 1
+                                ) if len(rtts) > 1 else None
+                            })
+
+                        event_data = json.dumps({
+                            "target": target,
+                            "resolved_ip": resolved_ip,
+                            "hops": hops_snapshot,
+                            "packet_count": count,
+                            "cycle": cycle_count,
+                            "complete": cycle_count >= count
+                        })
+                        yield f"data: {event_data}\n\n"
+
+                elif line_type == 'x':
+                    # Timeout
+                    hop["sent"] += 1
+
+                    max_known_hop = max(hop_stats.keys()) if hop_stats else 0
+                    if hop_num == max_known_hop:
+                        cycle_count += 1
+                        hops_snapshot = []
+                        for h_num in sorted(hop_stats.keys()):
+                            h = hop_stats[h_num]
+                            rtts = h["rtts"]
+                            total_sent = h["sent"]
+                            total_recv = h["received"]
+                            loss = ((total_sent - total_recv) / total_sent * 100) if total_sent > 0 else 100
+
+                            hops_snapshot.append({
+                                "hop": h["hop"],
+                                "ip": h["ip"],
+                                "hostname": h["hostname"] or h["ip"],
+                                "loss_percent": round(loss, 1),
+                                "sent": total_sent,
+                                "received": total_recv,
+                                "rtt_min": round(min(rtts), 1) if rtts else None,
+                                "rtt_avg": round(sum(rtts) / len(rtts), 1) if rtts else None,
+                                "rtt_max": round(max(rtts), 1) if rtts else None,
+                                "rtt_jitter": round(
+                                    sum(abs(rtts[i] - rtts[i-1]) for i in range(1, len(rtts))) / (len(rtts) - 1), 1
+                                ) if len(rtts) > 1 else None
+                            })
+
+                        event_data = json.dumps({
+                            "target": target,
+                            "resolved_ip": resolved_ip,
+                            "hops": hops_snapshot,
+                            "packet_count": count,
+                            "cycle": cycle_count,
+                            "complete": cycle_count >= count
+                        })
+                        yield f"data: {event_data}\n\n"
+
+            await proc.wait()
+
+            # Send final complete event
+            yield f"data: {json.dumps({'complete': True})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        mtr_event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 # ============== Continuous Ping Endpoints ==============
